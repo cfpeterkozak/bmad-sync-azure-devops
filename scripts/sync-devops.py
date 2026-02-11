@@ -504,7 +504,9 @@ def sync_epic_iterations(az_path: str, config: Dict[str, str], iterations: List[
     """Create epic-based iterations and move epics, stories, and tasks into them."""
     results = {"created": [], "failed": [], "skipped": [], "movements": []}
 
-    iteration_root = config.get("iterationRootPath", "")
+    # Build the full iteration root path (e.g., "ProjectName\Iterations\Root")
+    # get_default_iteration prepends projectName if needed
+    iteration_root = get_default_iteration(config)
 
     def move_item(item_type, item_id, devops_id, iter_path, slug):
         """Move a work item to an iteration path."""
@@ -540,7 +542,10 @@ def sync_epic_iterations(az_path: str, config: Dict[str, str], iterations: List[
                 "--name", slug,
             ]
             if iteration_root:
-                args += ["--path", iteration_root]
+                # az boards iteration project create --path requires absolute
+                # path with leading backslash, e.g. \ProjectName\Iterations
+                abs_path = iteration_root if iteration_root.startswith("\\") else f"\\{iteration_root}"
+                args += ["--path", abs_path]
 
             progress(f"Creating Iteration: {slug}")
             data, err = run_az(az_path, args)
