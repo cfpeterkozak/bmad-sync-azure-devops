@@ -185,9 +185,6 @@ class TestLoadSyncState:
         assert result == {"epics": {}, "stories": {}, "tasks": {}, "iterations": {}}
 
     def test_basic_sync_state(self, tmp_file):
-        # Note: the simple YAML parser saves the previous item when it encounters
-        # the next item ID or at EOF. Each section needs 2+ items, or items are
-        # only saved if they're the very last item in the file.
         content = (
             "epics:\n"
             '  "1":\n'
@@ -211,8 +208,36 @@ class TestLoadSyncState:
         result = compute_hashes.load_sync_state(path)
         assert result["epics"]["1"]["devopsId"] == 12345
         assert result["epics"]["1"]["contentHash"] == "abc123def456"
+        assert result["epics"]["2"]["devopsId"] == 12399
         assert result["stories"]["1.1"]["devopsId"] == 12346
         assert result["stories"]["1.1"]["epicDevopsId"] == 12345
+
+    def test_last_item_per_section_saved(self, tmp_file):
+        """Ensure the last item before a section transition is not lost."""
+        content = (
+            "epics:\n"
+            '  "1":\n'
+            "    devopsId: 100\n"
+            '    contentHash: "aaa"\n'
+            "stories:\n"
+            '  "1.1":\n'
+            "    devopsId: 200\n"
+            '    contentHash: "bbb"\n'
+            "tasks:\n"
+            '  "1.1-T1":\n'
+            "    devopsId: 300\n"
+            '    contentHash: "ccc"\n'
+            "iterations:\n"
+            "  epic-1-test:\n"
+            '    epicId: "1"\n'
+        )
+        path = tmp_file(content, "sync.yaml")
+        result = compute_hashes.load_sync_state(path)
+        # Each section has exactly 1 item — all must be preserved
+        assert result["epics"]["1"]["devopsId"] == 100
+        assert result["stories"]["1.1"]["devopsId"] == 200
+        assert result["tasks"]["1.1-T1"]["devopsId"] == 300
+        assert result["iterations"]["epic-1-test"]["epicId"] == "1"
 
     def test_iteration_with_epicId(self, tmp_file):
         content = (

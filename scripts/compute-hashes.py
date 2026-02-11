@@ -107,26 +107,22 @@ def load_sync_state(path: Optional[str]) -> Dict[str, Dict]:
 
     for line in content.splitlines():
         # Top-level sections
-        if re.match(r'^epics:\s*$', line):
-            current_section = "epics"
+        section_match = re.match(r'^(epics|stories|tasks|iterations):\s*$', line)
+        if section_match:
+            # Save pending item before switching sections
+            if current_section and current_id and current_item:
+                result[current_section][current_id] = current_item
+            current_section = section_match.group(1)
             current_id = None
-            continue
-        if re.match(r'^stories:\s*$', line):
-            current_section = "stories"
-            current_id = None
-            continue
-        if re.match(r'^tasks:\s*$', line):
-            current_section = "tasks"
-            current_id = None
-            continue
-        if re.match(r'^iterations:\s*$', line):
-            current_section = "iterations"
-            current_id = None
+            current_item = {}
             continue
         if re.match(r'^\w', line) and not line.startswith(" "):
-            # Other top-level key (like lastFullSync)
+            # Other top-level key (like lastFullSync) — save pending item
+            if current_section and current_id and current_item:
+                result[current_section][current_id] = current_item
             current_section = None
             current_id = None
+            current_item = {}
             continue
 
         if not current_section:
