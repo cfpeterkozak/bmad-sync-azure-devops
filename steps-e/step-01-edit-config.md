@@ -3,6 +3,7 @@ name: 'step-01-edit-config'
 description: 'Load, display, modify, and validate Azure DevOps connection configuration'
 
 configFile: '{output_folder}/devops-sync-config.yaml'
+detectTemplateScript: '../scripts/detect-template.py'
 ---
 
 # Edit: Modify Connection Configuration
@@ -96,8 +97,14 @@ az devops project show --project {newProject} --output json
 
 Re-detect process template:
 
+**Primary method — cross-platform Python script:**
 ```bash
-az boards work-item type list --output json
+python {detectTemplateScript} --org {newOrgUrl} --project {newProject}
+```
+
+**Manual REST API fallback (if Python not available):**
+```bash
+curl -s -u ":{AZURE_DEVOPS_EXT_PAT}" "{newOrgUrl}/{newProject}/_apis/wit/workitemtypes?api-version=7.0"
 ```
 
 Update process template from response. Report: "Process template: {template}"

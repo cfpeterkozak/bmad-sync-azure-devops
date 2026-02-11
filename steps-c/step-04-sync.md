@@ -5,6 +5,7 @@ description: 'Execute az boards CLI commands to create and update work items in 
 nextStepFile: './step-05-complete.md'
 configFile: '{output_folder}/devops-sync-config.yaml'
 cliReference: '../data/azure-devops-cli.md'
+syncScript: '../scripts/sync-devops.py'
 ---
 
 # Step 4: Sync to Azure DevOps
@@ -55,170 +56,44 @@ Execute `az boards` CLI commands to create and update Epics, Stories, Tasks, and
 
 **CRITICAL:** Follow this sequence exactly. Do not skip, reorder, or improvise unless user explicitly requests a change.
 
-### 1. Load Config and CLI Reference
+### 1. Load Config and Execute Sync Script
 
-Load {configFile} for connection settings and process template type.
-
-Load {cliReference} for CLI command patterns, field mappings per process template, and error handling guidance.
-
-Determine the correct `--type` value for stories based on process template:
-- Agile: `"User Story"`
-- Scrum: `"Product Backlog Item"`
-- CMMI: `"Requirement"`
-- Basic: `"Issue"`
-
-Initialize results tracker: `{ created: [], updated: [], failed: [], skipped: [] }`
-
-### 2. Sync Epics (Must Complete Before Stories)
-
-For each Epic classified as **NEW**:
+**Primary method — cross-platform Python script:**
 
 ```bash
-az boards work-item create \
-  --type Epic \
-  --title "{epicTitle}" \
-  --description "{epicDescription wrapped in <div>}" \
-  --area "{areaPath}" \
-  --output json
+python {syncScript} --diff "{output_folder}/_diff-results.json" --config "{configFile}" --output "{output_folder}/_sync-results.json"
 ```
 
-Parse JSON response: extract `id` field. Record work item ID.
+The script:
+1. Auto-detects `az` executable path (`shutil.which` — handles `az.cmd` on Windows)
+2. Loads diff results and config (process template, area path, iteration root)
+3. Syncs in correct dependency order: **Epics → Stories → Tasks → Iterations**
+4. For each NEW item: creates via `az boards work-item create`, extracts ID from JSON response
+5. For each NEW story/task: adds parent link via `az boards work-item relation add`
+6. For each CHANGED item: updates via `az boards work-item update`
+7. For NEW iterations: creates via `az boards iteration project create`, then assigns stories
+8. Individual failures are logged and the sync continues (error resilience)
+9. Writes complete results JSON with all work item IDs, hashes, and error details
+10. Prints progress to stderr as it executes each operation
 
-Report each: "Created Epic #{id}: {title}"
+Monitor the script's stderr output for real-time progress updates. When complete, load `{output_folder}/_sync-results.json` for the results.
 
-For each Epic classified as **CHANGED**:
+Report the summary from the script output:
+- "Epics: {created} created, {updated} updated, {failed} failed."
+- "Stories: {created} created, {updated} updated, {failed} failed."
+- "Tasks: {created} created, {updated} updated, {failed} failed."
+- "Iterations: {created} created, {assigned} stories assigned."
 
-```bash
-az boards work-item update \
-  --id {existingDevopsId} \
-  --title "{updatedTitle}" \
-  --description "{updatedDescription}" \
-  --output json
-```
+**Fallback (if Python unavailable) — manual CLI execution:**
 
-Report each: "Updated Epic #{id}: {title}"
+Load {configFile} for connection settings and process template type. Load {cliReference} for CLI command patterns and field mappings. Execute `az boards` commands individually in dependency order per {cliReference}. The dependency order is critical:
 
-**On failure (non-zero exit):** Log error message, add to failed list, continue with next item.
+1. **Epics first** — create/update all epics, record DevOps IDs
+2. **Stories second** — create with parent link to epic, update changed stories
+3. **Tasks third** — create with parent link to story, update task state
+4. **Iterations last** — create iterations, assign stories
 
-Report summary: "Epics: {created} created, {updated} updated, {failed} failed."
-
-### 3. Sync Stories (Must Complete Before Tasks)
-
-For each Story classified as **NEW**:
-
-**Create the work item:**
-```bash
-az boards work-item create \
-  --type "{storyType per template}" \
-  --title "{storyTitle}" \
-  --description "{userStoryText wrapped in <div>}" \
-  --area "{areaPath}" \
-  --fields "{AcceptanceCriteriaField per template}={AC wrapped in <div>}" \
-  --output json
-```
-
-Parse JSON response: extract `id`. Record work item ID.
-
-**Add parent link to Epic:**
-```bash
-az boards work-item relation add \
-  --id {newStoryId} \
-  --relation-type parent \
-  --target-id {epicDevopsId} \
-  --output json
-```
-
-Report each: "Created Story #{id}: {title} (parent: Epic #{epicId})"
-
-For each Story classified as **CHANGED**:
-
-```bash
-az boards work-item update \
-  --id {existingDevopsId} \
-  --fields "{AcceptanceCriteriaField}={updatedAC}" \
-  --output json
-```
-
-Report each: "Updated Story #{id}: {title}"
-
-**On failure:** Log, add to failed list, continue.
-
-Report summary: "Stories: {created} created, {updated} updated, {failed} failed."
-
-### 4. Sync Tasks (If Task Data Exists)
-
-For each Task classified as **NEW**:
-
-```bash
-az boards work-item create \
-  --type Task \
-  --title "{taskDescription}" \
-  --area "{areaPath}" \
-  --output json
-```
-
-Parse response, extract `id`.
-
-**Add parent link to Story:**
-```bash
-az boards work-item relation add \
-  --id {newTaskId} \
-  --relation-type parent \
-  --target-id {storyDevopsId} \
-  --output json
-```
-
-**If task is complete (checkbox checked), update state:**
-```bash
-az boards work-item update --id {newTaskId} --state "{completeState per template}" --output json
-```
-
-Report each: "Created Task #{id}: {description} (parent: Story #{storyId})"
-
-For each Task classified as **CHANGED**:
-
-```bash
-az boards work-item update \
-  --id {existingDevopsId} \
-  --state "{state based on checkbox}" \
-  --output json
-```
-
-**On failure:** Log, add to failed list, continue.
-
-Report summary: "Tasks: {created} created, {updated} updated, {failed} failed."
-
-### 5. Sync Iterations (If Sprint Data Exists)
-
-For each Iteration classified as **NEW**:
-
-```bash
-az boards iteration project create \
-  --name "{iterationName}" \
-  --path "{iterationRootPath}" \
-  --start-date "{startDate}" \
-  --finish-date "{endDate}" \
-  --output json
-```
-
-Report: "Created Iteration: {name}"
-
-**Create empty iterations even if no stories are assigned yet** — the board structure should be ready.
-
-For each Story assigned to this iteration:
-
-```bash
-az boards work-item update \
-  --id {storyDevopsId} \
-  --iteration "{iterationRootPath}\\{iterationName}" \
-  --output json
-```
-
-Report: "Assigned Story #{id} to {iterationName}"
-
-**On failure:** Log, continue.
-
-Report summary: "Iterations: {created} created. {assigned} stories assigned."
+See {cliReference} for exact command syntax, field mappings per process template, and error handling patterns.
 
 ### 6. Present MENU OPTIONS
 
@@ -252,5 +127,6 @@ Display: "**Sync execution complete. Proceeding to write results...**"
 - Using wrong work item type for process template
 - Processing UNCHANGED items
 - Skipping iteration creation when no stories assigned
+- Writing a new batch script from scratch when {syncScript} is available
 
 **Master Rule:** Skipping steps, optimizing sequences, or not following exact instructions is FORBIDDEN and constitutes SYSTEM FAILURE.

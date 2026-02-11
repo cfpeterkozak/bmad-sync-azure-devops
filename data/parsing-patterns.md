@@ -8,16 +8,17 @@
 
 ### Epic Headers
 
-**Pattern:** Level 2 heading with "Epic N:" prefix
+**Pattern:** Heading with "Epic N:" prefix (flexible heading level — auto-detected by parse script)
 
 ```regex
-^## Epic (\d+):\s*(.+)$
+^#{2,4} Epic (\d+):\s*(.+)$
 ```
 
 - Capture group 1: Epic ID (e.g., `1`, `2`, `15`)
 - Capture group 2: Epic title
+- Heading levels vary between projects (`##`, `###`, or `####`). The `scripts/parse-artifacts.py` script auto-detects the level by scanning for the first `Epic N:` heading.
 
-**Content under each epic until next `## Epic` or `## ` heading:**
+**Content under each epic until next epic heading or same-level heading:**
 - Description paragraphs
 - Phase assignment (look for `**Phase:**` or `**Target Phase:**`)
 - Requirements references (look for `FR-`, `NFR-`, `ARCH-` patterns)
@@ -25,16 +26,17 @@
 
 ### Story Headers
 
-**Pattern:** Level 3 heading with "Story N.M:" prefix
+**Pattern:** Heading with "Story N.M:" prefix (one level below epics — auto-detected)
 
 ```regex
-^### Story (\d+\.\d+):\s*(.+)$
+^#{2,5} Story (\d+\.\d+):\s*(.+)$
 ```
 
 - Capture group 1: Story ID (e.g., `1.1`, `3.5`)
 - Capture group 2: Story title
+- Story headings are always one level deeper than epic headings. The `scripts/parse-artifacts.py` script auto-detects both levels.
 
-**Content under each story until next `### Story` or `### ` or `## ` heading:**
+**Content under each story until next story heading, epic heading, or same-level heading:**
 - User story text (first paragraph, often "As a... I want... So that...")
 - Acceptance criteria block (see below)
 - FR/NFR/ARCH references inline
@@ -61,12 +63,30 @@
 
 ### File Location
 
-Story files are created by the Create Story workflow at:
+Story files are discovered in two formats (flat files take priority when both exist for the same ID):
+
+**Format 1 — Flat kebab-case files (preferred):**
+```
+{implementation_artifacts}/{N-M-slug}.md
+```
+Example: `_bmad-output/implementation-artifacts/1-1-initialize-solution-scaffold-with-net-aspire.md`
+
+Story ID extraction pattern:
+```regex
+^(\d+)-(\d+)-
+```
+Result: `{group1}.{group2}` → e.g., `1.1`
+
+**Format 2 — Nested directories (backward compat):**
 ```
 {implementation_artifacts}/{story-id}/story.md
 ```
-
 Example: `_bmad-output/implementation-artifacts/1.1/story.md`
+
+**Discovery priority:** The 3-pass scan in `parse-artifacts.py` ensures each story ID is only parsed once:
+1. Known story IDs from `epics.md` in nested `{N.M}/story.md` format
+2. Flat `{N-M-slug}.md` files — skips IDs already found in pass 1
+3. Unknown nested directories matching `^\d+\.\d+$` — skips IDs found in passes 1-2
 
 ### Task/Subtask Extraction
 
@@ -94,6 +114,52 @@ Example: `_bmad-output/implementation-artifacts/1.1/story.md`
 **Task ID generation:** Sequential within story: `{storyId}-T1`, `{storyId}-T2`, etc.
 
 **Subtask ID:** `{storyId}-T{N}.{M}` (subtask M under task N)
+
+### Status Field
+
+**Pattern:** Matches both `Status: done` and `**Status:** done` (case-insensitive)
+
+```regex
+^\*?\*?Status:\*?\*?\s*(.+)$
+```
+
+**Valid values:** `draft`, `in-progress`, `review`, `done`
+
+- Extracted from the first matching line in the story file
+- Value is normalized to lowercase
+- Maps to Azure DevOps work item state (see `azure-devops-cli.md` State Mapping)
+- Included in story content hash — status changes trigger CHANGED classification
+
+### Review Follow-ups
+
+Review follow-up sections contain AI code review items that sync as Task work items in Azure DevOps.
+
+**Section header pattern:**
+
+```regex
+^###\s+Review Follow-ups(?:\s+Round\s+(\d+))?\s*\(AI\)\s*$
+```
+
+Matches headers like:
+- `### Review Follow-ups (AI)` — defaults to Round 1
+- `### Review Follow-ups Round 2 (AI)`
+- `### Review Follow-ups Round 3 (AI)`
+
+**Item pattern:** Same checkbox format as tasks:
+
+```regex
+^- \[([ xX])\]\s*(.+)$
+```
+
+**Review follow-up ID generation:** `{storyId}-R{round}.{itemNum}`
+
+Examples: `1.1-R1.1`, `1.1-R1.2`, `1.1-R2.1`, `1.1-R2.3`
+
+**Metadata fields:** Each review follow-up task includes:
+- `isReviewFollowup: true`
+- `reviewRound: N` (integer)
+
+Review follow-up tasks are merged into the main `tasks` array and use the same `description + checkboxState` hash as regular tasks.
 
 ---
 
@@ -130,10 +196,10 @@ normalize(title) + normalize(description) + normalize(phase) + sort(requirements
 ### Story Hash Inputs
 
 ```
-normalize(title) + normalize(userStoryText) + normalize(acceptanceCriteriaBlock)
+normalize(title) + normalize(userStoryText) + normalize(acceptanceCriteriaBlock) + normalize(status)
 ```
 
-**Note:** The entire AC block is hashed as-is (after normalization), not individual AC items.
+**Note:** The entire AC block is hashed as-is (after normalization), not individual AC items. The status field (e.g., `done`, `in-progress`) is included so that status changes trigger CHANGED classification and state sync.
 
 ### Task Hash Inputs
 
@@ -152,7 +218,17 @@ Where `checkboxState` = `"complete"` or `"incomplete"`
 5. Concatenate all fields with `|` separator
 6. SHA-256 the result, output as hex string (first 12 chars for readability)
 
-### Hash Computation Commands
+### Hash Computation
+
+**Primary method — cross-platform Python script:**
+
+```bash
+python scripts/compute-hashes.py --parsed "{output_folder}/_parsed-artifacts.json" --sync-state "{syncFile}" --output "{output_folder}/_diff-results.json"
+```
+
+The script handles all normalization, SHA-256 computation, and diff classification internally using Python's `hashlib`. No shell commands needed — fully cross-platform.
+
+**Manual fallback (if Python not available):**
 
 The LLM cannot compute SHA-256 natively. Use these shell commands via the Bash tool:
 

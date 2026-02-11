@@ -5,6 +5,7 @@ description: 'Check prerequisites (az CLI, PAT), load or create config, validate
 nextStepFile: './step-02-parse.md'
 configFile: '{output_folder}/devops-sync-config.yaml'
 cliReference: '../data/azure-devops-cli.md'
+detectTemplateScript: '../scripts/detect-template.py'
 ---
 
 # Step 1: Initialize Azure DevOps Connection
@@ -128,13 +129,21 @@ az devops project show --project {projectName} --output json
 
 ### 4. Detect Process Template
 
-Query available work item types:
+**Primary method — cross-platform Python script:**
 
 ```bash
-az boards work-item type list --output json
+python {detectTemplateScript} --org {organizationUrl} --project {projectName}
 ```
 
-Detect process template from the response (see {cliReference} for detection logic):
+The script calls the REST API and returns JSON with `processTemplate` and `workItemTypes` fields. Extract the `processTemplate` value.
+
+**Manual REST API fallback (if Python not available):**
+
+```bash
+curl -s -u ":{AZURE_DEVOPS_EXT_PAT}" "{organizationUrl}/{projectName}/_apis/wit/workitemtypes?api-version=7.0"
+```
+
+Then apply detection logic (see {cliReference}):
 - Contains `"User Story"` → **Agile**
 - Contains `"Product Backlog Item"` → **Scrum**
 - Contains `"Requirement"` → **CMMI**

@@ -5,6 +5,7 @@ description: 'Extract structured data from epics.md, story files, and sprint-sta
 nextStepFile: './step-03-diff.md'
 configFile: '{output_folder}/devops-sync-config.yaml'
 parsingPatterns: '../data/parsing-patterns.md'
+parseScript: '../scripts/parse-artifacts.py'
 ---
 
 # Step 2: Parse BMAD Artifacts
@@ -34,10 +35,9 @@ Extract structured data (epics, stories, tasks, iterations) from all BMAD source
 
 - 🎯 Focus ONLY on parsing — do not create or update anything in Azure DevOps
 - 🚫 FORBIDDEN to modify any source files
-- 🎯 Use subprocess Pattern 3 (Data Ops) for large epics.md to keep context clean
-- 🎯 Use subprocess Pattern 4 (Parallel) for story file parsing when multiple story files exist
-- 💬 Subprocesses return compact structured JSON — never full file contents
-- ⚙️ If subprocesses unavailable, perform all parsing in main thread sequentially
+- 🎯 Primary: Use {parseScript} for all parsing (cross-platform, handles heading level auto-detection)
+- 🎯 Optional fallback: Use sub-agent approach if Python is unavailable
+- ⚙️ If neither script nor subprocesses are available, perform all parsing in main thread sequentially
 
 ## EXECUTION PROTOCOLS:
 
@@ -61,58 +61,49 @@ Extract structured data (epics, stories, tasks, iterations) from all BMAD source
 
 Load {parsingPatterns} for regex patterns and extraction rules.
 
-### 2. Parse epics.md
+### 2. Parse All Artifacts
 
-Load {parsingPatterns} section "Source 1: epics.md" for heading patterns.
+Locate source files:
+- `epics.md` at `{planning_artifacts}/epics.md`
+- Story files at `{implementation_artifacts}/`
+- Sprint data at `{planning_artifacts}/sprint-status.yaml`
 
-Locate `epics.md` at `{planning_artifacts}/epics.md`.
+**Primary method — cross-platform Python script:**
 
-**Subprocess optimization (Pattern 3 — Data Operations):**
+```bash
+python {parseScript} --epics "{planning_artifacts}/epics.md" --stories-dir "{implementation_artifacts}" --sprint-yaml "{planning_artifacts}/sprint-status.yaml" --output "{output_folder}/_parsed-artifacts.json"
+```
+
+The script:
+1. Auto-detects heading levels (scans for `Epic N:` pattern at any `#` level)
+2. Extracts all epics with title, description, phase, requirements, dependencies
+3. Extracts all stories with title, user story text, acceptance criteria, epic parent
+4. Scans story directories for task/subtask breakdowns with completion state
+5. Parses sprint-status.yaml for iteration names, dates, story assignments
+6. Writes structured JSON to the output path and prints it to stdout
+
+Load the output JSON and report the counts from the `counts` field.
+
+**Fallback (if Python unavailable) — sub-agent approach:**
 
 Launch a sub-agent that:
-1. Loads the full `epics.md` file (potentially 6,000+ lines)
-2. Extracts all epics using the `^## Epic (\d+):\s*(.+)$` pattern
-3. For each epic: extracts title, description, phase, requirements references, dependencies
-4. Extracts all stories using the `^### Story (\d+\.\d+):\s*(.+)$` pattern
-5. For each story: extracts title, user story text, acceptance criteria block, epic parent ID
-6. Returns compact JSON per the return format in {parsingPatterns}
+1. Loads the full `epics.md` file
+2. Extracts epics using `^#{2,4} Epic (\d+):\s*(.+)$` pattern (flexible heading level)
+3. Extracts stories using `^#{2,5} Story (\d+\.\d+):\s*(.+)$` pattern (flexible heading level)
+4. Returns compact JSON per the return format in {parsingPatterns}
 
-**Fallback:** If sub-agent unavailable, parse epics.md directly in main thread section by section.
+If sub-agent also unavailable, parse in main thread sequentially using patterns from {parsingPatterns}.
 
 Report: "Parsed epics.md: {N} epics, {M} stories extracted."
 
-### 3. Scan Story Files for Task Breakdowns
+### 3. Verify Parse Results
 
-Check `{implementation_artifacts}/` for existing story directories containing `story.md` files.
-
-**If story files exist:**
-
-**Subprocess optimization (Pattern 4 — Parallel):**
-
-For each story file found, launch a sub-process that:
-1. Loads the story file
-2. Finds the `## Tasks / Subtasks` section
-3. Extracts tasks (checkboxes) and subtasks (indented checkboxes) with completion state
-4. Assigns task IDs per the pattern: `{storyId}-T1`, `{storyId}-T2`, etc.
-5. Returns compact JSON per the return format in {parsingPatterns}
-
-All sub-processes run in parallel. Aggregate results when all complete.
-
-**Fallback:** If sub-processes unavailable, parse story files sequentially in main thread.
-
-**If no story files exist:** Report: "No story files found. Tasks will be created when stories are implemented."
+Review the parsed JSON output:
+- Check that epic and story counts look reasonable
+- Check for any parse errors logged by the script
 
 Report: "Scanned story files: {N} stories with task breakdowns, {T} total tasks."
-
-### 4. Load Sprint Data
-
-Check if `sprint-status.yaml` exists at `{planning_artifacts}/sprint-status.yaml`.
-
-**If exists:** Parse iteration names, dates, and story assignments.
-
-Report: "Loaded sprint data: {N} iterations defined."
-
-**If not exists:** Report: "No sprint-status.yaml found. Iterations will be skipped."
+Report: "Loaded sprint data: {I} iterations defined." (or "No sprint data found.")
 
 ### 5. Present Parsing Summary
 
@@ -160,6 +151,6 @@ Display: "**Parsed data summary above. Confirm and continue?** [C] Continue to d
 - Making Azure DevOps API calls during parsing
 - Computing content hashes (that's step 03)
 - Halting on individual parse errors (should log and continue)
-- Loading full file contents into sub-agent return (should be compact JSON only)
+- Manually writing a parser when the parse script is available
 
 **Master Rule:** Skipping steps, optimizing sequences, or not following exact instructions is FORBIDDEN and constitutes SYSTEM FAILURE.

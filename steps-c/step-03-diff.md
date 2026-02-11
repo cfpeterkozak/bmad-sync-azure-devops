@@ -5,6 +5,7 @@ description: 'Compare content hashes against stored state and present dry-run su
 nextStepFile: './step-04-sync.md'
 syncFile: '{output_folder}/devops-sync.yaml'
 parsingPatterns: '../data/parsing-patterns.md'
+hashScript: '../scripts/compute-hashes.py'
 ---
 
 # Step 3: Diff and Dry-Run Summary
@@ -65,25 +66,25 @@ Report: "Existing sync state loaded: {N} epics, {M} stories, {T} tasks, {I} iter
 
 **If not exists:** Report: "No prior sync state. This is a first-run — all items will be new."
 
-### 2. Compute Content Hashes
+### 2. Compute Content Hashes and Classify Items
 
-Load hash scope definitions from {parsingPatterns} section "Content Hash Scope".
+**Primary method — cross-platform Python script:**
 
-For each parsed item, compute a normalized content hash:
+```bash
+python {hashScript} --parsed "{output_folder}/_parsed-artifacts.json" --sync-state "{syncFile}" --output "{output_folder}/_diff-results.json"
+```
 
-**Epics:** `normalize(title) + normalize(description) + normalize(phase) + sort(requirements).join(",")` then SHA-256 (first 12 hex chars)
+The script handles all normalization, SHA-256 computation, and classification internally:
+- Normalizes content (trim, collapse whitespace, lowercase, sort lists, join with `|`)
+- Computes SHA-256 (first 12 hex chars) using Python's `hashlib`
+- Compares against stored hashes in {syncFile}
+- Classifies each item: **NEW** / **CHANGED** / **UNCHANGED** / **ORPHANED**
+- Classifies iterations: **NEW** / **EXISTS**
+- Outputs JSON with all hashes, classifications, and a summary with estimated CLI call counts
 
-**Stories:** `normalize(title) + normalize(userStoryText) + normalize(acceptanceCriteriaBlock)` then SHA-256 (first 12 hex chars)
+**Fallback (if Python unavailable):**
 
-**Tasks:** `normalize(taskDescription) + checkboxState` then SHA-256 (first 12 hex chars)
-
-**Normalization:** Trim, collapse whitespace, lowercase, sort lists, join with `|` separator.
-
-**Hash computation:** Use shell commands from {parsingPatterns} section "Hash Computation Commands" — the LLM cannot compute SHA-256 natively.
-
-### 3. Classify Each Item
-
-Compare computed hashes against stored hashes:
+Use shell commands from {parsingPatterns} section "Hash Computation" to compute hashes individually. Apply classification logic manually per these rules:
 
 | Condition | Classification |
 |-----------|---------------|
@@ -92,16 +93,9 @@ Compare computed hashes against stored hashes:
 | Item in sync file, hash differs | **CHANGED** — will be updated |
 | Item in sync file, not in parsed data | **ORPHANED** — in DevOps but removed from BMAD (warn only) |
 
-### 4. Classify Iterations
+### 3. Present Dry-Run Summary
 
-For each iteration from sprint-status.yaml:
-
-| Condition | Classification |
-|-----------|---------------|
-| Iteration not in sync file | **NEW** — will be created |
-| Iteration in sync file | **EXISTS** — will be skipped |
-
-### 5. Present Dry-Run Summary
+Load the diff results JSON. Extract the `summary` field for counts.
 
 Display:
 
@@ -162,5 +156,6 @@ Display: "**Review the dry-run above. Proceed with sync?** [C] Confirm and sync 
 - Using raw (non-normalized) content for hashing
 - Deleting orphaned items from Azure DevOps
 - Skipping the dry-run summary
+- Making 100+ individual shell calls for hashing when the script is available
 
 **Master Rule:** Skipping steps, optimizing sequences, or not following exact instructions is FORBIDDEN and constitutes SYSTEM FAILURE.

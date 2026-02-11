@@ -18,11 +18,11 @@ epics.md ──┐
 story files ┘
 ```
 
-1. **Parse** your BMAD markdown files (epics, stories, tasks, sprints)
+1. **Parse** your BMAD markdown files (epics, stories, tasks, review follow-ups, sprints)
 2. **Hash** each item's content using normalized SHA-256 for reliable change detection
 3. **Diff** against the last sync state — classify items as new/changed/unchanged/orphaned
 4. **Dry-run** shows exactly what will happen — you confirm before any API calls
-5. **Sync** creates/updates work items via `az boards` CLI in dependency order (Epics → Stories → Tasks → Iterations)
+5. **Sync** creates/updates work items via `az boards` CLI in dependency order (Epics → Stories → Tasks → Iterations), including story state mapping
 6. **Map** saves all Azure DevOps work item IDs and hashes to `devops-sync.yaml` for future incremental runs
 
 ## Prerequisites
@@ -30,6 +30,7 @@ story files ┘
 | Requirement | Details |
 |-------------|---------|
 | [BMAD Method](https://github.com/bmadcode/BMAD-METHOD) | Installed in your project with BMM module |
+| Python 3.6+ | For helper scripts (stdlib only — no pip install needed) |
 | Azure CLI | [Install guide](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) |
 | azure-devops extension | `az extension add --name azure-devops` |
 | Personal Access Token | With **Work Items: Read, write, & manage** scope |
@@ -92,10 +93,10 @@ Parses local artifacts, computes content hashes, shows a dry-run summary, and pu
 
 | Step | File | What It Does |
 |------|------|-------------|
-| 1 | `step-01-init.md` | Check prerequisites, load/create config, validate connection, detect process template |
-| 2 | `step-02-parse.md` | Parse epics.md (sub-agent for large files), story files (parallel), sprint-status.yaml |
-| 3 | `step-03-diff.md` | Compare content hashes, classify items (new/changed/unchanged/orphaned), present dry-run |
-| 4 | `step-04-sync.md` | Execute `az boards` commands in dependency order |
+| 1 | `step-01-init.md` | Check prerequisites, load/create config, validate connection, detect process template via `scripts/detect-template.py` |
+| 2 | `step-02-parse.md` | Parse all artifacts via `scripts/parse-artifacts.py` (auto-detects heading levels) |
+| 3 | `step-03-diff.md` | Batch hash + classify via `scripts/compute-hashes.py`, present dry-run |
+| 4 | `step-04-sync.md` | Batch sync via `scripts/sync-devops.py` (cross-platform, error-resilient) |
 | 5 | `step-05-complete.md` | Write `devops-sync.yaml` mapping file, present final report |
 
 ### [V]alidate — Audit Sync State
@@ -114,10 +115,43 @@ Displays current connection settings, allows field changes, re-validates connect
 
 | BMAD Source | Azure DevOps Work Item | Created When |
 |-------------|----------------------|--------------|
-| `epics.md` Epic (`## Epic N:`) | Epic | Create mode |
-| `epics.md` Story (`### Story N.M:`) | User Story / PBI / Requirement | Create mode |
+| `epics.md` Epic (`## Epic N:` or `### Epic N:`) | Epic | Create mode |
+| `epics.md` Story (`### Story N.M:` or `#### Story N.M:`) | User Story / PBI / Requirement | Create mode |
 | Story file Tasks (`- [ ] task`) | Task (parented to Story) | Create mode (after story files exist) |
+| Story file Review Follow-ups (`### Review Follow-ups (AI)`) | Task (parented to Story) | Create mode |
+| Story file `Status:` field | Work item State | Create mode (mapped per template) |
 | `sprint-status.yaml` sprints | Iterations | Create mode |
+
+> **Note:** Epic/Story heading levels vary between projects. The parse script auto-detects the correct levels by scanning for the first `Epic N:` pattern at any heading depth.
+
+### Story File Formats
+
+Story files are discovered in two formats. Flat files are the default output of the BMAD Create Story workflow:
+
+| Format | Example Path | Discovery |
+|--------|-------------|-----------|
+| **Flat** (preferred) | `implementation-artifacts/1-1-initialize-scaffold.md` | ID extracted from `{N}-{M}-slug.md` filename |
+| **Nested** (backward compat) | `implementation-artifacts/1.1/story.md` | ID from directory name |
+
+When both formats exist for the same story ID, the nested directory takes priority (backward compat). The parser performs a 3-pass scan to avoid duplicates.
+
+### Review Follow-ups
+
+AI code review items (from `### Review Follow-ups (AI)` and `### Review Follow-ups Round N (AI)` sections) sync as Task work items parented to their story. Each review item gets a unique ID: `{storyId}-R{round}.{item}` (e.g., `1.1-R1.1`, `1.1-R2.3`).
+
+### Story Status Sync
+
+The `Status:` field in story files maps to Azure DevOps work item state:
+
+| BMAD Status | Agile | Scrum | CMMI | Basic |
+|-------------|-------|-------|------|-------|
+| `draft` | New | New | Proposed | To Do |
+| `in-progress` | Active | Committed | Active | Doing |
+| `review` | Active | Committed | Active | Doing |
+| `done` | Closed | Done | Resolved | Done |
+| *(not set)* | *(no change)* | *(no change)* | *(no change)* | *(no change)* |
+
+> **Note:** `review` maps identically to `in-progress` since standard Azure DevOps templates lack a Review state.
 
 The Story work item type adapts to your Azure DevOps process template (auto-detected):
 
@@ -194,15 +228,17 @@ bugs:
 
 ## Content Hash-Based Change Detection
 
-The workflow uses normalized SHA-256 hashes (first 12 hex chars) to detect changes without false positives from formatting differences.
+The workflow uses normalized SHA-256 hashes (first 12 hex chars) to detect changes without false positives from formatting differences. All hashing is performed by `scripts/compute-hashes.py` using Python's `hashlib` — no shell commands or external tools needed.
 
 **Normalization pipeline:** trim whitespace → collapse spaces → lowercase → sort lists → join with `|`
 
 | Item Type | Hash Inputs |
 |-----------|------------|
 | Epic | title + description + phase + sorted requirements |
-| Story | title + user story text + acceptance criteria block |
+| Story | title + user story text + acceptance criteria block + status |
 | Task | task description + checkbox state (complete/incomplete) |
+
+> **Note:** Story status is included in the hash so that status changes (e.g., `in-progress` → `done`) trigger a CHANGED classification and state sync. Review follow-up tasks use the same hash formula as regular tasks.
 
 Re-running Create mode only pushes items whose hash changed since last sync.
 
@@ -224,7 +260,8 @@ Re-running Create mode only pushes items whose hash changed since last sync.
 | **Sprint Planning** | Produces `sprint-status.yaml` → consumed by Create mode for Iteration creation |
 | **Sprint Status** | Can read `devops-sync.yaml` `lastFullSync` timestamp to warn about unsynced changes |
 | **Create Story** | Generates story files with Tasks/Subtasks → consumed by Create mode for Task sync |
-| **Dev Story** | Updates task checkboxes → detected as CHANGED on next Create mode run |
+| **Dev Story** | Updates task checkboxes and story Status → detected as CHANGED on next Create mode run |
+| **Code Review** | Adds Review Follow-ups sections → synced as Task work items on next Create mode run |
 
 ## Error Handling
 
@@ -253,7 +290,13 @@ Verify your organization URL includes the org name (e.g., `https://dev.azure.com
 Your PAT needs **Work Items: Read, write, & manage** scope (not just Read & Write). Regenerate the token with the correct scope.
 
 **Wrong work item types created**
-The process template may have been misdetected. Run Edit mode to re-validate connection — template is re-detected automatically.
+The process template may have been misdetected. Run Edit mode to re-validate connection — template is re-detected automatically. You can also run the detection script directly: `python scripts/detect-template.py --org <URL> --project <NAME>`
+
+**Script says "AZURE_DEVOPS_EXT_PAT not set" but it is set**
+Ensure the variable is set in the same shell session where the AI agent invokes the scripts. Some IDE terminals don't inherit environment variables from other shells. On Windows PowerShell: `$env:AZURE_DEVOPS_EXT_PAT = "your-token"`. On Linux/Mac: `export AZURE_DEVOPS_EXT_PAT=your-token`.
+
+**`az.cmd` not found on Windows**
+The sync script auto-detects `az.cmd` via `shutil.which`. If detection fails, ensure `az` is on your `PATH`. Run `where az` in CMD or `Get-Command az` in PowerShell to verify.
 
 **"All items unchanged" but changes were made**
 Content hashes use normalized input. If only whitespace or formatting changed (no actual content change), the hash won't differ. This is intentional to avoid false diffs.
@@ -267,14 +310,19 @@ Validate mode queries bugs under the configured Area Path only. If bugs are file
 bmad-sync-azure-devops/
 ├── README.md                            # This documentation
 ├── workflow.md                          # Entry point: [C]reate / [V]alidate / [E]dit
+├── scripts/                            # Cross-platform Python helper scripts (stdlib only)
+│   ├── detect-template.py              # Process template detection via REST API
+│   ├── parse-artifacts.py              # Parse epics.md + story files + sprint YAML
+│   ├── compute-hashes.py              # Batch SHA-256 hashing + diff classification
+│   └── sync-devops.py                 # Batch az CLI execution with error resilience
 ├── data/
-│   ├── azure-devops-cli.md             # az boards CLI command reference
-│   └── parsing-patterns.md             # Regex patterns, hash scopes, hash commands
+│   ├── azure-devops-cli.md             # az boards CLI command reference + cross-platform notes
+│   └── parsing-patterns.md             # Regex patterns (flexible heading levels), hash scopes
 ├── steps-c/                            # Create mode steps
 │   ├── step-01-init.md                 # Prerequisites + config + connection
-│   ├── step-02-parse.md                # Parse epics.md + story files + sprints
-│   ├── step-03-diff.md                 # Hash comparison + dry-run summary
-│   ├── step-04-sync.md                 # Execute az boards CLI commands
+│   ├── step-02-parse.md                # Parse all artifacts via script
+│   ├── step-03-diff.md                 # Batch hash + classify via script + dry-run summary
+│   ├── step-04-sync.md                 # Batch sync via script
 │   └── step-05-complete.md             # Write mapping file + report
 ├── steps-v/                            # Validate mode
 │   └── step-01-validate.md             # Drift detection + bug discovery
@@ -282,12 +330,25 @@ bmad-sync-azure-devops/
     └── step-01-edit-config.md          # Modify connection config
 ```
 
+## Helper Scripts
+
+The `scripts/` directory contains four Python scripts that replace error-prone shell-per-item approaches with reliable, cross-platform batch operations. All scripts use **Python stdlib only** (no pip install) and work on Windows, Mac, and Linux.
+
+| Script | Replaces | Key Benefit |
+|--------|----------|-------------|
+| `detect-template.py` | Nonexistent `az boards work-item type list` CLI command | Uses REST API directly via `urllib.request` |
+| `parse-artifacts.py` | AI-written ad-hoc parser that broke on different heading levels | Auto-detects `##`/`###`/`####` heading levels |
+| `compute-hashes.py` | 100+ individual `sha256sum` / PowerShell shell calls | Single batch operation via `hashlib` |
+| `sync-devops.py` | AI-written batch script with `az.cmd` path issues on Windows | Auto-detects `az` path via `shutil.which` |
+
+Each step file references its script via frontmatter (e.g., `parseScript: '../scripts/parse-artifacts.py'`). If Python is unavailable, fallback instructions are provided in each step.
+
 ## Known Limitations
 
 1. **Bug lifecycle gap**: `devops-bugs.yaml` tracks `bmadStatus` (new/triaged/fixed) but no BMAD workflow currently updates this status. Triage is manual.
 2. **No auto-delete**: Orphaned items in Azure DevOps are never deleted automatically. Remove manually if needed.
 3. **One-way content sync**: Content flows BMAD → Azure DevOps. Edits made directly in Azure DevOps are not synced back to BMAD files.
-4. **State sync is partial**: Task checkbox state syncs to DevOps work item state, but DevOps state changes don't flow back to BMAD checkboxes.
+4. **State sync is one-way**: Story status and task checkbox state sync from BMAD → DevOps, but DevOps state changes don't flow back to BMAD files.
 
 ## License
 

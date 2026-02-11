@@ -54,8 +54,21 @@ Returns project details if accessible. Non-zero exit code on auth or not-found e
 
 ### 2. Detect Process Template (Work Item Types)
 
+**Primary method — cross-platform Python script:**
+
 ```bash
-az boards work-item type list --project {projectName} --organization {organizationUrl} --output json
+python scripts/detect-template.py --org {organizationUrl} --project {projectName}
+```
+
+Returns JSON: `{"processTemplate": "Scrum", "workItemTypes": ["Epic", "Product Backlog Item", ...]}`
+
+The script calls the REST API `_apis/wit/workitemtypes?api-version=7.0` via `urllib.request` and auto-detects the process template from the available work item types.
+
+**Manual REST API fallback (if Python not available):**
+
+```bash
+curl -s -u ":{AZURE_DEVOPS_EXT_PAT}" \
+  "{organizationUrl}/{projectName}/_apis/wit/workitemtypes?api-version=7.0"
 ```
 
 **Template Detection Logic:**
@@ -175,11 +188,15 @@ az boards query \
 
 ### State Mapping
 
+Maps BMAD story `Status:` field values to Azure DevOps work item states. The `review` status maps identically to `in-progress` since standard DevOps templates lack a dedicated Review state.
+
 | BMAD Status | Agile | Scrum | CMMI | Basic |
 |-------------|-------|-------|------|-------|
-| Not Started | New | New | Proposed | To Do |
-| In Progress | Active | Committed | Active | Doing |
-| Complete | Closed | Done | Resolved | Done |
+| `draft` | New | New | Proposed | To Do |
+| `in-progress` | Active | Committed | Active | Doing |
+| `review` | Active | Committed | Active | Doing |
+| `done` | Closed | Done | Resolved | Done |
+| *(not set)* | *(no change)* | *(no change)* | *(no change)* | *(no change)* |
 
 ---
 
@@ -230,3 +247,17 @@ echo "$result" | jq -r '.fields["System.Title"]'
 $result = az boards work-item create --type Epic --title "..." --output json | ConvertFrom-Json
 $result.id
 ```
+
+---
+
+## Cross-Platform Notes
+
+### Windows-Specific
+
+- **az.cmd:** On Windows, the Azure CLI installs as `az.cmd`. When calling from `subprocess` in Python, use `shutil.which("az")` or `shutil.which("az.cmd")` to find the correct executable. The `scripts/sync-devops.py` handles this automatically.
+- **Shell execution:** On Windows, use `shell=True` with `subprocess.run()` when invoking `az.cmd` to ensure proper execution.
+- **PowerShell:** Use `$env:AZURE_DEVOPS_EXT_PAT` instead of `export AZURE_DEVOPS_EXT_PAT`.
+
+### jq Is Optional
+
+The helper scripts (`scripts/*.py`) parse JSON internally using Python's `json` module. The `jq` tool is only needed if running raw `az` commands manually. All script-based operations are self-contained with no external dependencies beyond Python stdlib.

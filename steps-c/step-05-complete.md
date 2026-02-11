@@ -3,6 +3,8 @@ name: 'step-05-complete'
 description: 'Write devops-sync.yaml with all mappings and present final sync report'
 
 syncFile: '{output_folder}/devops-sync.yaml'
+syncResults: '{output_folder}/_sync-results.json'
+diffResults: '{output_folder}/_diff-results.json'
 ---
 
 # Step 5: Write Results and Final Report
@@ -52,6 +54,8 @@ Persist all sync results to the mapping file and present a comprehensive final r
 **CRITICAL:** Follow this sequence exactly. Do not skip, reorder, or improvise unless user explicitly requests a change.
 
 ### 1. Build Sync Mapping Data
+
+Load sync results from {syncResults} (written by `scripts/sync-devops.py` in step 04) and diff results from {diffResults} (written by `scripts/compute-hashes.py` in step 03). These JSON files contain all work item IDs, content hashes, and error details needed to build the mapping.
 
 Compile all results into the sync file schema:
 
