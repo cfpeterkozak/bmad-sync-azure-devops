@@ -101,6 +101,49 @@ class TestWrapHtml:
     def test_none(self):
         assert sync_devops.wrap_html(None) == ""
 
+    def test_max_len_no_truncation(self):
+        result = sync_devops.wrap_html("short", max_len=100)
+        assert result == "<div>short</div>"
+
+    def test_max_len_truncates_long_text(self):
+        text = "A" * 5000
+        result = sync_devops.wrap_html(text, max_len=100)
+        assert "truncated" in result
+        # The raw text inside the div should be well under 5000 chars
+        assert len(result) < 1000
+
+    def test_max_len_zero_means_no_limit(self):
+        text = "B" * 5000
+        result = sync_devops.wrap_html(text, max_len=0)
+        assert "truncated" not in result
+        assert "B" * 100 in result
+
+
+# --- truncate_title ---
+
+class TestTruncateTitle:
+    def test_short_title_unchanged(self):
+        assert sync_devops.truncate_title("Hello World") == "Hello World"
+
+    def test_exact_255_unchanged(self):
+        title = "A" * 255
+        assert sync_devops.truncate_title(title) == title
+
+    def test_over_255_truncated(self):
+        title = "A" * 300
+        result = sync_devops.truncate_title(title)
+        assert len(result) == 255
+        assert result.endswith("...")
+
+    def test_custom_max_len(self):
+        title = "A" * 50
+        result = sync_devops.truncate_title(title, max_len=20)
+        assert len(result) == 20
+        assert result.endswith("...")
+
+    def test_empty_string(self):
+        assert sync_devops.truncate_title("") == ""
+
 
 # --- get_default_iteration ---
 

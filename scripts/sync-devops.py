@@ -135,10 +135,24 @@ def map_bmad_status_to_devops_state(status: Optional[str], template: str) -> Opt
     return status_map.get(template)
 
 
-def wrap_html(text: Optional[str]) -> str:
-    """Wrap plain text in a div for Azure DevOps HTML fields."""
+def truncate_title(text: str, max_len: int = 255) -> str:
+    """Truncate a work item title to fit Azure DevOps 255-char limit."""
+    if len(text) <= max_len:
+        return text
+    return text[:max_len - 3].rstrip() + "..."
+
+
+def wrap_html(text: Optional[str], max_len: int = 0) -> str:
+    """Wrap plain text in a div for Azure DevOps HTML fields.
+
+    If max_len > 0, truncate the text before escaping to stay within CLI limits.
+    On Windows cmd.exe has an 8191-char command line limit; large descriptions
+    or acceptance criteria can exceed this.
+    """
     if not text:
         return ""
+    if max_len > 0 and len(text) > max_len:
+        text = text[:max_len].rstrip() + "\n\n(truncated — full content in BMAD source files)"
     escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     escaped = escaped.replace("\n", "<br>")
     return f"<div>{escaped}</div>"
@@ -189,8 +203,8 @@ def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]]
             args = [
                 "boards", "work-item", "create",
                 "--type", "Epic",
-                "--title", epic.get("title", ""),
-                "--description", wrap_html(epic.get("description", "")),
+                "--title", truncate_title(epic.get("title", "")),
+                "--description", wrap_html(epic.get("description", ""), max_len=3000),
             ]
             if area:
                 args += ["--area", area]
@@ -226,8 +240,8 @@ def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]]
             args = [
                 "boards", "work-item", "update",
                 "--id", str(devops_id),
-                "--title", epic.get("title", ""),
-                "--description", wrap_html(epic.get("description", "")),
+                "--title", truncate_title(epic.get("title", "")),
+                "--description", wrap_html(epic.get("description", ""), max_len=3000),
             ]
 
             progress(f"Updating Epic {epic_id} (#{devops_id}): {epic.get('title', '')}")
@@ -272,8 +286,8 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
             args = [
                 "boards", "work-item", "create",
                 "--type", story_type,
-                "--title", story.get("title", ""),
-                "--description", wrap_html(story.get("userStoryText", "")),
+                "--title", truncate_title(story.get("title", "")),
+                "--description", wrap_html(story.get("userStoryText", ""), max_len=3000),
             ]
             if area:
                 args += ["--area", area]
@@ -283,7 +297,7 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
             # Add acceptance criteria
             ac_text = story.get("acceptanceCriteria", "")
             if ac_text and ac_field:
-                args += ["--fields", f"{ac_field}={wrap_html(ac_text)}"]
+                args += ["--fields", f"{ac_field}={wrap_html(ac_text, max_len=3000)}"]
 
             progress(f"Creating Story {story_id}: {story.get('title', '')}")
             data, err = run_az(az_path, args)
@@ -347,13 +361,13 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
             args = [
                 "boards", "work-item", "update",
                 "--id", str(devops_id),
-                "--title", story.get("title", ""),
-                "--description", wrap_html(story.get("userStoryText", "")),
+                "--title", truncate_title(story.get("title", "")),
+                "--description", wrap_html(story.get("userStoryText", ""), max_len=3000),
             ]
 
             ac_text = story.get("acceptanceCriteria", "")
             if ac_text and ac_field:
-                args += ["--fields", f"{ac_field}={wrap_html(ac_text)}"]
+                args += ["--fields", f"{ac_field}={wrap_html(ac_text, max_len=3000)}"]
 
             # Include state in update if story has a BMAD status
             devops_state = map_bmad_status_to_devops_state(
@@ -402,7 +416,7 @@ def sync_tasks(az_path: str, config: Dict[str, str], tasks: List[Dict[str, Any]]
             args = [
                 "boards", "work-item", "create",
                 "--type", "Task",
-                "--title", task.get("description", ""),
+                "--title", truncate_title(task.get("description", "")),
             ]
             if area:
                 args += ["--area", area]

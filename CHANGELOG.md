@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-02-11
+
+### Fixed
+- Truncate work item titles to 255 chars (Azure DevOps `System.Title` limit) — fixes review follow-up task creation failures
+- Truncate HTML description/acceptance-criteria fields to 3000 chars before CLI escaping — fixes Windows cmd.exe 8191-char command line limit for large story content
+
+### Added
+- `truncate_title()` helper with configurable max length and ellipsis
+- `max_len` parameter on `wrap_html()` for CLI-safe field truncation
+- Tests for `truncate_title()` and `wrap_html()` truncation behavior
+
 ## [0.4.0] - 2026-02-11
 
 ### Changed
