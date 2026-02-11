@@ -43,7 +43,7 @@ Copy this workflow into your BMAD project:
 
 ```bash
 # Option A: Git submodule (recommended — enables version-tracked updates)
-git submodule add https://github.com/yourorg/bmad-sync-azure-devops _bmad/bmm/workflows/sync-azure-devops
+git submodule add https://github.com/cfpeterkozak/bmad-sync-azure-devops _bmad/bmm/workflows/sync-azure-devops
 
 # Option B: Direct copy
 cp -r bmad-sync-azure-devops/ your-project/_bmad/bmm/workflows/sync-azure-devops/
