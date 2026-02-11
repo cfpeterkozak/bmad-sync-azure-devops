@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse BMAD artifacts (epics.md, story files, sprint YAML) into structured JSON.
+"""Parse BMAD artifacts (epics.md, story files, epic statuses) into structured JSON.
 
 Cross-platform, stdlib-only. Auto-detects heading levels.
 """
@@ -385,80 +385,37 @@ def scan_story_files(stories_dir, story_ids):
     return all_tasks, story_statuses, review_followups_by_story
 
 
-def parse_sprint_yaml(path):
-    """Parse sprint-status.yaml without PyYAML (simple key-value parser)."""
-    iterations = []
+def parse_epic_statuses(path):
+    """Parse sprint-status.yaml for epic development statuses.
 
+    Returns dict: epic ID -> status (e.g., {"1": "in-progress", "2": "backlog"}).
+    """
     if not path or not os.path.isfile(path):
-        return iterations
+        return {}
 
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Simple YAML parser for the expected sprint-status structure
-    lines = content.splitlines()
-    current_sprint = None
-    current_data = {}
+    in_dev_status = False
+    epic_statuses = {}
 
-    for line in lines:
-        # Sprint name: "Sprint 1":  or  Sprint 1:
-        sm = re.match(r'^\s+"([^"]+)":\s*$|^\s+(\S[^:]*):\s*$', line)
-        if sm:
-            name = sm.group(1) or sm.group(2)
-            # Check if this looks like a sprint name vs a property
-            if name and name not in ("sprints", "startDate", "endDate", "stories"):
-                if current_sprint and current_data:
-                    iterations.append({
-                        "name": current_sprint,
-                        **current_data
-                    })
-                current_sprint = name
-                current_data = {"startDate": "", "endDate": "", "stories": []}
+    for line in content.splitlines():
+        if re.match(r'^development_status:\s*$', line):
+            in_dev_status = True
             continue
+        if in_dev_status:
+            if line and not line[0].isspace():
+                break
+            m = re.match(r'^\s+epic-(\d+):\s*(\S+)\s*$', line)
+            if m:
+                epic_statuses[m.group(1)] = m.group(2).strip().lower()
 
-        # Properties under a sprint
-        if current_sprint:
-            # startDate / endDate
-            dm = re.match(r'^\s+startDate:\s*"?([^"]*)"?\s*$', line)
-            if dm:
-                current_data["startDate"] = dm.group(1).strip()
-                continue
-            dm = re.match(r'^\s+endDate:\s*"?([^"]*)"?\s*$', line)
-            if dm:
-                current_data["endDate"] = dm.group(1).strip()
-                continue
-
-            # Stories list: stories: ["1.1", "1.2"]
-            slm = re.match(r'^\s+stories:\s*\[([^\]]*)\]', line)
-            if slm:
-                raw = slm.group(1)
-                current_data["stories"] = [
-                    s.strip().strip('"').strip("'")
-                    for s in raw.split(",")
-                    if s.strip()
-                ]
-                continue
-
-            # Stories as YAML list items: - "1.1"
-            sim = re.match(r'^\s+-\s*"?([^"]*)"?\s*$', line)
-            if sim:
-                val = sim.group(1).strip()
-                if val:
-                    current_data["stories"].append(val)
-
-    # Don't forget the last sprint
-    if current_sprint and current_data:
-        iterations.append({
-            "name": current_sprint,
-            **current_data
-        })
-
-    return iterations
+    return epic_statuses
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Parse BMAD artifacts (epics, stories, tasks, sprints) into structured JSON"
+        description="Parse BMAD artifacts (epics, stories, tasks, epic statuses) into structured JSON"
     )
     parser.add_argument("--epics", required=True, help="Path to epics.md")
     parser.add_argument("--stories-dir", default="", help="Path to implementation artifacts directory")
@@ -486,21 +443,21 @@ def main():
             all_review_tasks.append({**task, "storyId": story_id})
     all_tasks.extend(all_review_tasks)
 
-    # Parse sprint data
-    iterations = parse_sprint_yaml(args.sprint_yaml)
+    # Parse epic statuses from sprint-status.yaml
+    epic_statuses = parse_epic_statuses(args.sprint_yaml)
 
     result = {
         "epics": epics,
         "stories": stories,
         "tasks": all_tasks,
-        "iterations": iterations,
+        "epicStatuses": epic_statuses,
         "storyStatuses": story_statuses,
         "counts": {
             "epics": len(epics),
             "stories": len(stories),
             "tasks": len(all_tasks),
             "storyFilesWithTasks": len(tasks_by_story),
-            "iterations": len(iterations),
+            "epicStatusesLoaded": len(epic_statuses),
             "reviewFollowupTasks": len(all_review_tasks),
             "storyFilesWithReviewFollowups": len(review_followups_by_story)
         }

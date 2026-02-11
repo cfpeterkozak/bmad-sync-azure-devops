@@ -36,13 +36,20 @@ def compute_hash(content_string):
     return h[:12]
 
 
-def hash_epic(epic):
-    """Compute content hash for an epic."""
+def hash_epic(epic, epic_statuses=None):
+    """Compute content hash for an epic.
+
+    Includes normalized epic status in hash so status changes trigger CHANGED classification.
+    """
+    status = ""
+    if epic_statuses:
+        status = epic_statuses.get(epic.get("id", ""), "")
     parts = [
         normalize(epic.get("title", "")),
         normalize(epic.get("description", "")),
         normalize(epic.get("phase", "")),
-        normalize_list(epic.get("requirements", []))
+        normalize_list(epic.get("requirements", [])),
+        normalize(status)
     ]
     return compute_hash("|".join(parts))
 
@@ -72,6 +79,13 @@ def hash_task(task):
         state
     ]
     return compute_hash("|".join(parts))
+
+
+def generate_iteration_slug(epic_id, title):
+    """Generate a kebab-case iteration slug from epic ID and title."""
+    slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
+    full = f"epic-{epic_id}-{slug}"
+    return full[:128].rstrip('-') if len(full) > 128 else full
 
 
 def load_sync_state(path):
@@ -205,14 +219,15 @@ def main():
     # Load existing sync state
     sync_state = load_sync_state(args.sync_state)
 
-    # Extract story statuses from parsed data
+    # Extract statuses from parsed data
     story_statuses = parsed.get("storyStatuses", {})
+    epic_statuses = parsed.get("epicStatuses", {})
 
     # Classify each type
     epic_results = classify_items(
         parsed.get("epics", []),
         sync_state.get("epics", {}),
-        hash_epic
+        lambda e: hash_epic(e, epic_statuses)
     )
 
     story_results = classify_items(
@@ -227,20 +242,60 @@ def main():
         hash_task
     )
 
-    # Classify iterations
+    # Derive epic-based iterations for epics with status in-progress or done
     iteration_results = []
     stored_iterations = sync_state.get("iterations", {})
-    for it in parsed.get("iterations", []):
-        name = it["name"]
-        if name in stored_iterations:
+
+    # Build lookup: story epicId -> list of story IDs
+    story_ids_by_epic = {}
+    for story in parsed.get("stories", []):
+        eid = story.get("epicId", "")
+        if eid:
+            story_ids_by_epic.setdefault(eid, []).append(story["id"])
+
+    # Build lookup: task storyId -> list of task IDs
+    task_ids_by_story = {}
+    for task in parsed.get("tasks", []):
+        sid = task.get("storyId", "")
+        if sid:
+            task_ids_by_story.setdefault(sid, []).append(task["id"])
+
+    for epic in parsed.get("epics", []):
+        epic_id = epic.get("id", "")
+        status = epic_statuses.get(epic_id, "")
+        if status not in ("in-progress", "done"):
+            continue
+
+        # Check if sync state already has an iteration for this epic (by epicId field)
+        existing_slug = None
+        for slug, iter_data in stored_iterations.items():
+            if iter_data.get("epicId") == epic_id:
+                existing_slug = slug
+                break
+
+        slug = existing_slug or generate_iteration_slug(epic_id, epic.get("title", ""))
+
+        # Collect story and task IDs belonging to this epic
+        epic_story_ids = story_ids_by_epic.get(epic_id, [])
+        epic_task_ids = []
+        for sid in epic_story_ids:
+            epic_task_ids.extend(task_ids_by_story.get(sid, []))
+
+        if slug in stored_iterations:
             iteration_results.append({
-                **it,
+                "slug": slug,
+                "epicId": epic_id,
+                "storyIds": epic_story_ids,
+                "taskIds": epic_task_ids,
                 "classification": "EXISTS",
-                "devopsId": stored_iterations[name].get("devopsId")
+                "devopsId": stored_iterations[slug].get("devopsId")
             })
         else:
             iteration_results.append({
-                **it,
+                "slug": slug,
+                "epicId": epic_id,
+                "storyIds": epic_story_ids,
+                "taskIds": epic_task_ids,
                 "classification": "NEW",
                 "devopsId": None
             })
@@ -274,18 +329,26 @@ def main():
         + story_counts["CHANGED"]  # story update (includes state in same call)
         + task_counts["NEW"] * 2  # task create + parent link
         + task_counts["CHANGED"]  # task update
-        + iter_counts["NEW"]  # iteration create
     )
-    # Add iteration assignments for new iterations
+    # Add iteration calls: creation + item movement (epic + stories + tasks)
     for it in iteration_results:
         if it["classification"] == "NEW":
-            cli_calls += len(it.get("stories", []))
+            cli_calls += 1  # iteration create
+            cli_calls += 1  # move epic
+            cli_calls += len(it.get("storyIds", []))  # move stories
+            cli_calls += len(it.get("taskIds", []))  # move tasks
+        elif it["classification"] == "EXISTS":
+            # Still move items (handles items added since last sync)
+            cli_calls += 1  # move epic
+            cli_calls += len(it.get("storyIds", []))  # move stories
+            cli_calls += len(it.get("taskIds", []))  # move tasks
 
     result = {
         "epics": epic_results,
         "stories": story_results,
         "tasks": task_results,
         "iterations": iteration_results,
+        "epicStatuses": epic_statuses,
         "storyStatuses": story_statuses,
         "summary": {
             "epics": epic_counts,

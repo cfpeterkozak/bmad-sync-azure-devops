@@ -18,7 +18,7 @@ epics.md ──┐
 story files ┘
 ```
 
-1. **Parse** your BMAD markdown files (epics, stories, tasks, review follow-ups, sprints)
+1. **Parse** your BMAD markdown files (epics, stories, tasks, review follow-ups, epic statuses)
 2. **Hash** each item's content using normalized SHA-256 for reliable change detection
 3. **Diff** against the last sync state — classify items as new/changed/unchanged/orphaned
 4. **Dry-run** shows exactly what will happen — you confirm before any API calls
@@ -120,7 +120,7 @@ Displays current connection settings, allows field changes, re-validates connect
 | Story file Tasks (`- [ ] task`) | Task (parented to Story) | Create mode (after story files exist) |
 | Story file Review Follow-ups (`### Review Follow-ups (AI)`) | Task (parented to Story) | Create mode |
 | Story file `Status:` field | Work item State | Create mode (mapped per template) |
-| `sprint-status.yaml` sprints | Iterations | Create mode |
+| `sprint-status.yaml` epic statuses | Epic Iterations (sub-iterations named by epic slug) | Create mode (when epic is `in-progress` or `done`) |
 
 > **Note:** Epic/Story heading levels vary between projects. The parse script auto-detects the correct levels by scanning for the first `Epic N:` pattern at any heading depth.
 
@@ -205,8 +205,9 @@ tasks:
     lastSynced: "2026-03-01T14:30:00Z"
     status: "synced"
 iterations:
-  "Sprint 1":
-    devopsId: "sprint-guid-here"
+  "epic-1-foundation-infrastructure-platform-bootstrap":
+    epicId: "1"
+    devopsId: "iteration-guid-here"
     lastSynced: "2026-03-01T14:30:00Z"
 ```
 
@@ -234,11 +235,11 @@ The workflow uses normalized SHA-256 hashes (first 12 hex chars) to detect chang
 
 | Item Type | Hash Inputs |
 |-----------|------------|
-| Epic | title + description + phase + sorted requirements |
+| Epic | title + description + phase + sorted requirements + epic status |
 | Story | title + user story text + acceptance criteria block + status |
 | Task | task description + checkbox state (complete/incomplete) |
 
-> **Note:** Story status is included in the hash so that status changes (e.g., `in-progress` → `done`) trigger a CHANGED classification and state sync. Review follow-up tasks use the same hash formula as regular tasks.
+> **Note:** Story status is included in the story hash so that status changes (e.g., `in-progress` → `done`) trigger a CHANGED classification and state sync. Epic status from `sprint-status.yaml` is included in the epic hash so that epic status changes trigger iteration creation. Review follow-up tasks use the same hash formula as regular tasks.
 
 Re-running Create mode only pushes items whose hash changed since last sync.
 
@@ -257,7 +258,7 @@ Re-running Create mode only pushes items whose hash changed since last sync.
 | BMAD Workflow | Integration Point |
 |---------------|-------------------|
 | **Create Epics and Stories** | Produces `epics.md` — the primary input for this workflow |
-| **Sprint Planning** | Produces `sprint-status.yaml` → consumed by Create mode for Iteration creation |
+| **Sprint Planning** | Produces `sprint-status.yaml` with `development_status:` → consumed by Create mode for epic-based Iteration creation |
 | **Sprint Status** | Can read `devops-sync.yaml` `lastFullSync` timestamp to warn about unsynced changes |
 | **Create Story** | Generates story files with Tasks/Subtasks → consumed by Create mode for Task sync |
 | **Dev Story** | Updates task checkboxes and story Status → detected as CHANGED on next Create mode run |
@@ -312,7 +313,7 @@ bmad-sync-azure-devops/
 ├── workflow.md                          # Entry point: [C]reate / [V]alidate / [E]dit
 ├── scripts/                            # Cross-platform Python helper scripts (stdlib only)
 │   ├── detect-template.py              # Process template detection via REST API
-│   ├── parse-artifacts.py              # Parse epics.md + story files + sprint YAML
+│   ├── parse-artifacts.py              # Parse epics.md + story files + epic statuses
 │   ├── compute-hashes.py              # Batch SHA-256 hashing + diff classification
 │   └── sync-devops.py                 # Batch az CLI execution with error resilience
 ├── data/

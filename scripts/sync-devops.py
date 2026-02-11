@@ -378,8 +378,9 @@ def sync_stories(az_path, config, stories, epic_id_map, story_statuses=None):
 
 
 def sync_tasks(az_path, config, tasks, story_id_map):
-    """Create/update tasks with parent links to stories."""
+    """Create/update tasks with parent links to stories. Returns (results, id_map)."""
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
+    id_map = {}
 
     area = config.get("areaPath", "")
     iteration = get_default_iteration(config)
@@ -391,6 +392,8 @@ def sync_tasks(az_path, config, tasks, story_id_map):
         task_id = task.get("id", "")
 
         if cls == "UNCHANGED" or cls == "ORPHANED":
+            if task.get("devopsId"):
+                id_map[task_id] = task["devopsId"]
             results["skipped"].append({"id": task_id, "classification": cls})
             continue
 
@@ -418,6 +421,7 @@ def sync_tasks(az_path, config, tasks, story_id_map):
                 results["failed"].append({"id": task_id, "error": "No ID in response"})
                 continue
 
+            id_map[task_id] = devops_id
             progress(f"  Created Task #{devops_id}")
 
             # Add parent link to story
@@ -457,6 +461,7 @@ def sync_tasks(az_path, config, tasks, story_id_map):
                 results["failed"].append({"id": task_id, "error": "No existing DevOps ID for update"})
                 continue
 
+            id_map[task_id] = devops_id
             state = complete_state if task.get("complete", False) else "New"
             args = [
                 "boards", "work-item", "update",
@@ -477,71 +482,86 @@ def sync_tasks(az_path, config, tasks, story_id_map):
                 })
                 progress(f"  Updated Task #{devops_id}")
 
-    return results
+    return results, id_map
 
 
-def sync_iterations(az_path, config, iterations, story_id_map):
-    """Create iterations and assign stories."""
-    results = {"created": [], "failed": [], "skipped": [], "assignments": []}
+def sync_epic_iterations(az_path, config, iterations, epic_id_map, story_id_map, task_id_map):
+    """Create epic-based iterations and move epics, stories, and tasks into them."""
+    results = {"created": [], "failed": [], "skipped": [], "movements": []}
 
     iteration_root = config.get("iterationRootPath", "")
 
+    def move_item(item_type, item_id, devops_id, iter_path, slug):
+        """Move a work item to an iteration path."""
+        assign_args = [
+            "boards", "work-item", "update",
+            "--id", str(devops_id),
+            "--iteration", iter_path,
+        ]
+        _, assign_err = run_az(az_path, assign_args)
+        if assign_err:
+            progress(f"  WARNING: {item_type} {item_id} move failed: {assign_err}")
+            results["movements"].append({
+                "type": item_type, "id": item_id, "iteration": slug,
+                "status": "failed", "error": assign_err
+            })
+        else:
+            results["movements"].append({
+                "type": item_type, "id": item_id, "iteration": slug,
+                "status": "moved"
+            })
+            progress(f"  Moved {item_type} #{devops_id} to {slug}")
+
     for it in iterations:
         cls = it.get("classification", "")
-        name = it.get("name", "")
+        slug = it.get("slug", "")
+        epic_id = it.get("epicId", "")
 
-        if cls == "EXISTS":
-            results["skipped"].append({"name": name, "classification": cls})
-            continue
+        iter_path = f"{iteration_root}\\{slug}" if iteration_root else slug
 
         if cls == "NEW":
             args = [
                 "boards", "iteration", "project", "create",
-                "--name", name,
+                "--name", slug,
             ]
             if iteration_root:
                 args += ["--path", iteration_root]
-            if it.get("startDate"):
-                args += ["--start-date", it["startDate"]]
-            if it.get("endDate"):
-                args += ["--finish-date", it["endDate"]]
 
-            progress(f"Creating Iteration: {name}")
+            progress(f"Creating Iteration: {slug}")
             data, err = run_az(az_path, args)
 
             if err:
                 progress(f"  FAILED: {err}")
-                results["failed"].append({"name": name, "error": err})
+                results["failed"].append({"slug": slug, "epicId": epic_id, "error": err})
                 continue
 
             devops_id = data.get("id", data.get("identifier", ""))
-            results["created"].append({"name": name, "devopsId": devops_id})
-            progress(f"  Created Iteration: {name}")
+            results["created"].append({"slug": slug, "epicId": epic_id, "devopsId": devops_id})
+            progress(f"  Created Iteration: {slug}")
 
-            # Assign stories to this iteration
-            for story_id in it.get("stories", []):
-                story_devops_id = story_id_map.get(story_id)
-                if not story_devops_id:
-                    progress(f"  WARNING: Story {story_id} not found in ID map, skipping iteration assignment")
-                    continue
+        elif cls == "EXISTS":
+            results["skipped"].append({"slug": slug, "epicId": epic_id, "classification": cls})
 
-                iter_path = f"{iteration_root}\\{name}" if iteration_root else name
-                assign_args = [
-                    "boards", "work-item", "update",
-                    "--id", str(story_devops_id),
-                    "--iteration", iter_path,
-                ]
-                _, assign_err = run_az(az_path, assign_args)
-                if assign_err:
-                    progress(f"  WARNING: Story {story_id} assignment failed: {assign_err}")
-                    results["assignments"].append({
-                        "storyId": story_id, "iteration": name, "status": "failed", "error": assign_err
-                    })
-                else:
-                    results["assignments"].append({
-                        "storyId": story_id, "iteration": name, "status": "assigned"
-                    })
-                    progress(f"  Assigned Story #{story_devops_id} to {name}")
+        # Move epic into iteration
+        epic_devops_id = epic_id_map.get(epic_id)
+        if epic_devops_id:
+            move_item("epic", epic_id, epic_devops_id, iter_path, slug)
+
+        # Move stories into iteration
+        for story_id in it.get("storyIds", []):
+            story_devops_id = story_id_map.get(story_id)
+            if story_devops_id:
+                move_item("story", story_id, story_devops_id, iter_path, slug)
+            else:
+                progress(f"  WARNING: Story {story_id} not found in ID map, skipping")
+
+        # Move tasks into iteration
+        for task_id in it.get("taskIds", []):
+            task_devops_id = task_id_map.get(task_id)
+            if task_devops_id:
+                move_item("task", task_id, task_devops_id, iter_path, slug)
+            else:
+                progress(f"  WARNING: Task {task_id} not found in ID map, skipping")
 
     return results
 
@@ -588,10 +608,13 @@ def main():
     )
 
     progress("\n=== Syncing Tasks ===")
-    task_results = sync_tasks(az_path, config, diff.get("tasks", []), story_id_map)
+    task_results, task_id_map = sync_tasks(az_path, config, diff.get("tasks", []), story_id_map)
 
-    progress("\n=== Syncing Iterations ===")
-    iteration_results = sync_iterations(az_path, config, diff.get("iterations", []), story_id_map)
+    progress("\n=== Syncing Epic Iterations ===")
+    iteration_results = sync_epic_iterations(
+        az_path, config, diff.get("iterations", []),
+        epic_id_map, story_id_map, task_id_map
+    )
 
     # Build output
     result = {
@@ -601,6 +624,7 @@ def main():
         "iterations": iteration_results,
         "epicIdMap": {k: v for k, v in epic_id_map.items()},
         "storyIdMap": {k: v for k, v in story_id_map.items()},
+        "taskIdMap": {k: v for k, v in task_id_map.items()},
         "summary": {
             "epicsCreated": len(epic_results["created"]),
             "epicsUpdated": len(epic_results["updated"]),
@@ -613,7 +637,7 @@ def main():
             "tasksFailed": len(task_results["failed"]),
             "iterationsCreated": len(iteration_results["created"]),
             "iterationsFailed": len(iteration_results["failed"]),
-            "iterationAssignments": len([a for a in iteration_results["assignments"] if a["status"] == "assigned"])
+            "iterationMovements": len([m for m in iteration_results["movements"] if m["status"] == "moved"])
         }
     }
 
@@ -631,7 +655,7 @@ def main():
     progress(f"Epics:      {s['epicsCreated']} created, {s['epicsUpdated']} updated, {s['epicsFailed']} failed")
     progress(f"Stories:    {s['storiesCreated']} created, {s['storiesUpdated']} updated, {s['storiesFailed']} failed")
     progress(f"Tasks:      {s['tasksCreated']} created, {s['tasksUpdated']} updated, {s['tasksFailed']} failed")
-    progress(f"Iterations: {s['iterationsCreated']} created, {s['iterationsFailed']} failed, {s['iterationAssignments']} assignments")
+    progress(f"Iterations: {s['iterationsCreated']} created, {s['iterationsFailed']} failed, {s['iterationMovements']} items moved")
 
 
 if __name__ == "__main__":

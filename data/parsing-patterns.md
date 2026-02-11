@@ -163,23 +163,29 @@ Review follow-up tasks are merged into the main `tasks` array and use the same `
 
 ---
 
-## Source 3: sprint-status.yaml
+## Source 3: sprint-status.yaml (Epic Statuses)
 
 ### Structure
 
 ```yaml
-sprints:
-  "Sprint 1":
-    startDate: "2026-03-01"
-    endDate: "2026-03-14"
-    stories: ["1.1", "1.2", "1.3"]
-  "Sprint 2":
-    startDate: "2026-03-15"
-    endDate: "2026-03-28"
-    stories: ["2.1", "2.2"]
+development_status:
+  epic-1: in-progress
+  epic-2: backlog
+  epic-3: done
 ```
 
-**Extract:** Sprint name, dates, and story assignments for Azure DevOps Iteration creation.
+**Extract:** Epic ID → development status. Used to derive epic-based iterations — when an epic reaches `in-progress` or `done`, a sub-iteration is auto-created and the epic + its stories + their tasks are moved into it.
+
+### Parsing
+
+The `development_status:` block is parsed line-by-line. Each `epic-N: status` entry maps epic ID to status string (e.g., `{"1": "in-progress", "2": "backlog"}`). Parsing stops at the next non-indented line.
+
+```regex
+^\s+epic-(\d+):\s*(\S+)\s*$
+```
+
+- Capture group 1: Epic ID (e.g., `1`, `2`)
+- Capture group 2: Status (e.g., `in-progress`, `backlog`, `done`)
 
 ---
 
@@ -190,8 +196,10 @@ Content hashes use normalized input (strip excess whitespace, trim, lowercase, s
 ### Epic Hash Inputs
 
 ```
-normalize(title) + normalize(description) + normalize(phase) + sort(requirements[]).join(",")
+normalize(title) + normalize(description) + normalize(phase) + sort(requirements[]).join(",") + normalize(epicStatus)
 ```
+
+**Note:** The epic status from `sprint-status.yaml` (e.g., `in-progress`, `done`) is included so that status changes trigger CHANGED classification and iteration creation.
 
 ### Story Hash Inputs
 
