@@ -278,14 +278,16 @@ def main():
         for sid in epic_story_ids:
             epic_task_ids.extend(task_ids_by_story.get(sid, []))
 
-        if slug in stored_iterations:
+        stored = stored_iterations.get(slug, {})
+        has_devops_id = stored.get("devopsId") not in (None, "", "None")
+        if slug in stored_iterations and has_devops_id:
             iteration_results.append({
                 "slug": slug,
                 "epicId": epic_id,
                 "storyIds": epic_story_ids,
                 "taskIds": epic_task_ids,
                 "classification": "EXISTS",
-                "devopsId": stored_iterations[slug].get("devopsId")
+                "devopsId": stored.get("devopsId")
             })
         else:
             iteration_results.append({
