@@ -504,8 +504,13 @@ def sync_epic_iterations(az_path: str, config: Dict[str, str], iterations: List[
     """Create epic-based iterations and move epics, stories, and tasks into them."""
     results = {"created": [], "failed": [], "skipped": [], "movements": []}
 
-    # Build the full iteration root path (e.g., "ProjectName\Iterations\Root")
-    # get_default_iteration prepends projectName if needed
+    # Build iteration paths. Azure DevOps uses two different path formats:
+    # - "iteration create --path" needs: \ProjectName\Iteration\ParentPath
+    #   (the literal word "Iteration" is required between project and parent)
+    # - "work-item update --iteration" needs: ProjectName\ParentPath\ChildName
+    project = config.get("projectName", "")
+    iter_root_raw = config.get("iterationRootPath", "")
+    # For work-item --iteration (no "Iteration" segment, no leading backslash)
     iteration_root = get_default_iteration(config)
 
     def move_item(item_type, item_id, devops_id, iter_path, slug):
@@ -541,11 +546,15 @@ def sync_epic_iterations(az_path: str, config: Dict[str, str], iterations: List[
                 "boards", "iteration", "project", "create",
                 "--name", slug,
             ]
-            if iteration_root:
-                # az boards iteration project create --path requires absolute
-                # path with leading backslash, e.g. \ProjectName\Iterations
-                abs_path = iteration_root if iteration_root.startswith("\\") else f"\\{iteration_root}"
-                args += ["--path", abs_path]
+            if project:
+                # az boards iteration project create --path requires:
+                # \ProjectName\Iteration\ParentIterationPath
+                # The literal "Iteration" segment is mandatory per Azure DevOps CLI.
+                if iter_root_raw:
+                    create_path = f"\\{project}\\Iteration\\{iter_root_raw}"
+                else:
+                    create_path = f"\\{project}\\Iteration"
+                args += ["--path", create_path]
 
             progress(f"Creating Iteration: {slug}")
             data, err = run_az(az_path, args)
