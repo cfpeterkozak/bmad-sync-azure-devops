@@ -66,12 +66,12 @@ Load {parsingPatterns} for regex patterns and extraction rules.
 Locate source files:
 - `epics.md` at `{planning_artifacts}/epics.md`
 - Story files at `{implementation_artifacts}/`
-- Sprint data at `{planning_artifacts}/sprint-status.yaml`
+- Sprint data at `{implementation_artifacts}/sprint-status.yaml`
 
 **Primary method — cross-platform Python script:**
 
 ```bash
-python {parseScript} --epics "{planning_artifacts}/epics.md" --stories-dir "{implementation_artifacts}" --sprint-yaml "{planning_artifacts}/sprint-status.yaml" --output "{output_folder}/_parsed-artifacts.json"
+python {parseScript} --epics "{planning_artifacts}/epics.md" --stories-dir "{implementation_artifacts}" --sprint-yaml "{implementation_artifacts}/sprint-status.yaml" --output "{output_folder}/_parsed-artifacts.json"
 ```
 
 The script:
@@ -79,7 +79,7 @@ The script:
 2. Extracts all epics with title, description, phase, requirements, dependencies
 3. Extracts all stories with title, user story text, acceptance criteria, epic parent
 4. Scans story directories for task/subtask breakdowns with completion state
-5. Parses sprint-status.yaml for iteration names, dates, story assignments
+5. Parses sprint-status.yaml for epic development statuses (backlog, in-progress, done)
 6. Writes structured JSON to the output path and prints it to stdout
 
 Load the output JSON and report the counts from the `counts` field.

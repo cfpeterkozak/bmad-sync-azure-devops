@@ -50,8 +50,8 @@ editWorkflow: './steps-e/step-01-edit-config.md'
 Load and read full config from {project-root}/_bmad/bmm/config.yaml and resolve:
 
 - `project_name`, `output_folder`, `user_name`, `communication_language`, `document_output_language`
-- `planning_artifacts` for locating `epics.md` and `sprint-status.yaml`
-- `implementation_artifacts` for locating story files
+- `planning_artifacts` for locating `epics.md`
+- `implementation_artifacts` for locating story files and `sprint-status.yaml`
 
 ### 2. Mode Selection
 
