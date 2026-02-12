@@ -267,6 +267,39 @@ class TestLoadSyncState:
         result = compute_hashes.load_sync_state(path)
         assert result["iterations"]["epic-1-foundation"]["epicId"] == "1"
 
+    def test_empty_value_property_not_treated_as_id(self, tmp_file):
+        """Regression: 4-space-indented empty-value lines like 'epicDevopsId: '
+        must NOT be misinterpreted as 2-space item ID lines."""
+        content = (
+            "stories:\n"
+            '  "1.1":\n'
+            "    devopsId: 13327\n"
+            "    epicDevopsId: \n"
+            '    contentHash: "abc123def456"\n'
+            '  "1.2":\n'
+            "    devopsId: 13328\n"
+            "    epicDevopsId: \n"
+            '    contentHash: "xyz789"\n'
+            "tasks:\n"
+            '  "1.1-T1":\n'
+            "    devopsId: 13400\n"
+            "    storyDevopsId: \n"
+            '    contentHash: "task111"\n'
+        )
+        path = tmp_file(content, "sync.yaml")
+        result = compute_hashes.load_sync_state(path)
+        # Stories must retain their contentHash (not lost to phantom items)
+        assert result["stories"]["1.1"]["devopsId"] == 13327
+        assert result["stories"]["1.1"]["contentHash"] == "abc123def456"
+        assert result["stories"]["1.2"]["devopsId"] == 13328
+        assert result["stories"]["1.2"]["contentHash"] == "xyz789"
+        # Tasks must retain their contentHash too
+        assert result["tasks"]["1.1-T1"]["devopsId"] == 13400
+        assert result["tasks"]["1.1-T1"]["contentHash"] == "task111"
+        # No phantom items should exist
+        assert "epicDevopsId" not in result["stories"]
+        assert "storyDevopsId" not in result["tasks"]
+
 
 # --- classify_items ---
 

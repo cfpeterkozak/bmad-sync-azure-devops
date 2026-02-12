@@ -128,8 +128,8 @@ def load_sync_state(path: Optional[str]) -> Dict[str, Dict]:
         if not current_section:
             continue
 
-        # Item ID line: "  "1":"  or  "  1.1-T1:"
-        id_match = re.match(r'^  "?([^":]+)"?:\s*$', line)
+        # Item ID line: "  "1":"  or  "  1.1-T1:" (exactly 2-space indent, not 4+)
+        id_match = re.match(r'^  (?! )"?([^":]+)"?:\s*$', line)
         if id_match:
             # Save previous item
             if current_id and current_item:
