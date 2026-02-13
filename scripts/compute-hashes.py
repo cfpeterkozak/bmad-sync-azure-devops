@@ -281,11 +281,17 @@ def main():
         stored = stored_iterations.get(slug, {})
         has_devops_id = stored.get("devopsId") not in (None, "", "None")
         if slug in stored_iterations and has_devops_id:
+            # EXISTS iteration: only include NEW items that need assignment.
+            # UNCHANGED and CHANGED items are already in this iteration.
+            new_story_ids = [sid for sid in epic_story_ids
+                            if sid not in sync_state.get("stories", {})]
+            new_task_ids = [tid for tid in epic_task_ids
+                           if tid not in sync_state.get("tasks", {})]
             iteration_results.append({
                 "slug": slug,
                 "epicId": epic_id,
-                "storyIds": epic_story_ids,
-                "taskIds": epic_task_ids,
+                "storyIds": new_story_ids,
+                "taskIds": new_task_ids,
                 "classification": "EXISTS",
                 "devopsId": stored.get("devopsId")
             })
@@ -345,10 +351,9 @@ def main():
             cli_calls += len(it.get("storyIds", []))  # move stories
             cli_calls += len(it.get("taskIds", []))  # move tasks
         elif it["classification"] == "EXISTS":
-            # Still move items (handles items added since last sync)
-            cli_calls += 1  # move epic
-            cli_calls += len(it.get("storyIds", []))  # move stories
-            cli_calls += len(it.get("taskIds", []))  # move tasks
+            # Only move NEW items (not already assigned to this iteration)
+            cli_calls += len(it.get("storyIds", []))  # move new stories
+            cli_calls += len(it.get("taskIds", []))  # move new tasks
 
     result = {
         "epics": epic_results,

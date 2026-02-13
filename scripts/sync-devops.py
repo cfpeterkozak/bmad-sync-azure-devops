@@ -737,10 +737,11 @@ def sync_epic_iterations(az_path: str, config: Dict[str, str], iterations: List[
         elif cls == "EXISTS":
             results["skipped"].append({"slug": slug, "epicId": epic_id, "classification": cls})
 
-        # Move epic into iteration
-        epic_devops_id = epic_id_map.get(epic_id)
-        if epic_devops_id:
-            move_item("epic", epic_id, epic_devops_id, iter_path, slug)
+        # Move epic into iteration (only for NEW iterations — epic already assigned for EXISTS)
+        if cls == "NEW":
+            epic_devops_id = epic_id_map.get(epic_id)
+            if epic_devops_id:
+                move_item("epic", epic_id, epic_devops_id, iter_path, slug)
 
         # Move stories into iteration
         for story_id in it.get("storyIds", []):

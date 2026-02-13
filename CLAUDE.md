@@ -48,6 +48,7 @@ Tests cover pure functions only (parsing, hashing, normalization, slug generatio
 | `scripts/parse-artifacts.py` | Parse epics.md, story files, epic statuses |
 | `scripts/compute-hashes.py` | Content hashing, diff classification, iteration derivation |
 | `scripts/sync-devops.py` | Batch Azure DevOps sync via az CLI |
+| `scripts/write-sync-state.py` | Deterministic YAML state file writer (merges diff + sync results) |
 | `scripts/detect-template.py` | Process template detection via REST API |
 | `data/parsing-patterns.md` | Regex patterns and hash scope documentation |
 | `workflow.md` | Entry point for AI agents running the workflow |

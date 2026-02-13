@@ -101,7 +101,7 @@ Parses local artifacts, computes content hashes, shows a dry-run summary, and pu
 | 2 | `step-02-parse.md` | Parse all artifacts via `scripts/parse-artifacts.py` (auto-detects heading levels) |
 | 3 | `step-03-diff.md` | Batch hash + classify via `scripts/compute-hashes.py`, present dry-run |
 | 4 | `step-04-sync.md` | Batch sync via `scripts/sync-devops.py` (cross-platform, error-resilient) |
-| 5 | `step-05-complete.md` | Write `devops-sync.yaml` mapping file, present final report |
+| 5 | `step-05-complete.md` | Write `devops-sync.yaml` via `scripts/write-sync-state.py`, present final report |
 
 ### [V]alidate — Audit Sync State
 
@@ -337,7 +337,8 @@ bmad-sync-azure-devops/
 │   ├── detect-template.py              # Process template detection via REST API
 │   ├── parse-artifacts.py              # Parse epics.md + story files + epic statuses
 │   ├── compute-hashes.py              # Batch SHA-256 hashing + diff classification
-│   └── sync-devops.py                 # Batch az CLI execution with error resilience
+│   ├── sync-devops.py                 # Batch az CLI execution with error resilience
+│   └── write-sync-state.py            # Deterministic YAML state file writer
 ├── data/
 │   ├── azure-devops-cli.md             # az boards CLI command reference + cross-platform notes
 │   └── parsing-patterns.md             # Regex patterns (flexible heading levels), hash scopes
@@ -363,6 +364,7 @@ The `scripts/` directory contains four Python scripts that replace error-prone s
 | `parse-artifacts.py` | AI-written ad-hoc parser that broke on different heading levels | Auto-detects `##`/`###`/`####` heading levels |
 | `compute-hashes.py` | 100+ individual `sha256sum` / PowerShell shell calls | Single batch operation via `hashlib` |
 | `sync-devops.py` | AI-written batch script with `az.cmd` path issues on Windows | Auto-detects `az` path via `shutil.which`, enriches tasks with priority/tags/description, attaches story files via REST API |
+| `write-sync-state.py` | Error-prone LLM YAML generation in step 05 | Deterministic merge of diff + sync results into `devops-sync.yaml` |
 
 Each step file references its script via frontmatter (e.g., `parseScript: '../scripts/parse-artifacts.py'`). If Python is unavailable, fallback instructions are provided in each step.
 

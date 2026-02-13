@@ -5,6 +5,8 @@ description: 'Write devops-sync.yaml with all mappings and present final sync re
 syncFile: '{output_folder}/devops-sync.yaml'
 syncResults: '{output_folder}/_sync-results.json'
 diffResults: '{output_folder}/_diff-results.json'
+configFile: '{output_folder}/devops-sync-config.yaml'
+writeStateScript: '../scripts/write-sync-state.py'
 ---
 
 # Step 5: Write Results and Final Report
@@ -53,11 +55,27 @@ Persist all sync results to the mapping file and present a comprehensive final r
 
 **CRITICAL:** Follow this sequence exactly. Do not skip, reorder, or improvise unless user explicitly requests a change.
 
-### 1. Build Sync Mapping Data
+### 1. Write Sync State File
 
-Load sync results from {syncResults} (written by `scripts/sync-devops.py` in step 04) and diff results from {diffResults} (written by `scripts/compute-hashes.py` in step 03). These JSON files contain all work item IDs, content hashes, and error details needed to build the mapping.
+**Primary method — cross-platform Python script:**
 
-Compile all results into the sync file schema:
+```bash
+python {writeStateScript} --diff "{diffResults}" --sync-results "{syncResults}" --config "{configFile}" --output "{syncFile}"
+```
+
+The script:
+1. Loads diff results (all items with contentHash and classification) and sync results (ID maps and iteration outcomes)
+2. Merges data: uses devopsId from sync results ID maps, contentHash from diff results
+3. Correctly extracts iteration slugs from the sync results `created[]`/`skipped[]` arrays (NOT the top-level dict keys)
+4. Marks failed items (devopsId = "None") as `status: "pending"` for retry
+5. Preserves unchanged items from diff results
+6. Writes deterministic YAML with proper formatting
+
+Report the counts from the script output.
+
+**Fallback (if Python unavailable):**
+
+Compile all results manually following this schema:
 
 ```yaml
 lastFullSync: "{current-ISO-timestamp}"
@@ -82,18 +100,16 @@ tasks:
     lastSynced: "{current-ISO-timestamp}"
     status: "synced"
 iterations:
-  "{iterationName}":
-    devopsId: "{iteration-id}"
+  "{iterationSlug}":
+    epicId: "{epicId}"
+    devopsId: {iteration-id}
+    devopsPath: "\\{project}\\Iteration\\{iterationRootPath}\\{slug}"
     lastSynced: "{current-ISO-timestamp}"
 ```
 
+**CRITICAL:** For iterations, extract actual slugs from sync results `created[]` and `skipped[]` arrays. Do NOT use the top-level dict keys (`created`, `failed`, `skipped`, `movements`) as iteration IDs.
+
 **For items that failed:** Set `status: "pending"` (no devopsId) so next sync retries them.
-
-**For unchanged items from prior sync:** Preserve their existing entries unchanged.
-
-### 2. Write Sync File
-
-Write the complete mapping to {syncFile}.
 
 Report: "Sync state written to {syncFile}"
 

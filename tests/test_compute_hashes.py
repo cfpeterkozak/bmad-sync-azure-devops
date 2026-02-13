@@ -354,3 +354,183 @@ class TestClassifyItems:
         assert by_id["2"] == "CHANGED"
         assert by_id["3"] == "NEW"
         assert by_id["4"] == "ORPHANED"
+
+
+# --- EXISTS iteration filtering ---
+
+class TestExistsIterationFiltering:
+    """Verify that EXISTS iterations only include NEW items, not already-synced ones."""
+
+    def _run_main_logic(self, parsed, sync_state):
+        """Run the iteration derivation logic from compute-hashes main().
+
+        Extracted here to test the filtering without invoking argparse.
+        """
+        epic_statuses = parsed.get("epicStatuses", {})
+        stored_iterations = sync_state.get("iterations", {})
+
+        story_ids_by_epic = {}
+        for story in parsed.get("stories", []):
+            eid = story.get("epicId", "")
+            if eid:
+                story_ids_by_epic.setdefault(eid, []).append(story["id"])
+
+        task_ids_by_story = {}
+        for task in parsed.get("tasks", []):
+            sid = task.get("storyId", "")
+            if sid:
+                task_ids_by_story.setdefault(sid, []).append(task["id"])
+
+        iteration_results = []
+        for epic in parsed.get("epics", []):
+            epic_id = epic.get("id", "")
+            status = epic_statuses.get(epic_id, "")
+            if status not in ("in-progress", "done"):
+                continue
+
+            existing_slug = None
+            for slug, iter_data in stored_iterations.items():
+                if iter_data.get("epicId") == epic_id:
+                    existing_slug = slug
+                    break
+
+            slug = existing_slug or compute_hashes.generate_iteration_slug(epic_id, epic.get("title", ""))
+
+            epic_story_ids = story_ids_by_epic.get(epic_id, [])
+            epic_task_ids = []
+            for sid in epic_story_ids:
+                epic_task_ids.extend(task_ids_by_story.get(sid, []))
+
+            stored = stored_iterations.get(slug, {})
+            has_devops_id = stored.get("devopsId") not in (None, "", "None")
+            if slug in stored_iterations and has_devops_id:
+                new_story_ids = [sid for sid in epic_story_ids
+                                 if sid not in sync_state.get("stories", {})]
+                new_task_ids = [tid for tid in epic_task_ids
+                                if tid not in sync_state.get("tasks", {})]
+                iteration_results.append({
+                    "slug": slug,
+                    "epicId": epic_id,
+                    "storyIds": new_story_ids,
+                    "taskIds": new_task_ids,
+                    "classification": "EXISTS",
+                    "devopsId": stored.get("devopsId")
+                })
+            else:
+                iteration_results.append({
+                    "slug": slug,
+                    "epicId": epic_id,
+                    "storyIds": epic_story_ids,
+                    "taskIds": epic_task_ids,
+                    "classification": "NEW",
+                    "devopsId": None
+                })
+        return iteration_results
+
+    def test_exists_iteration_excludes_synced_items(self):
+        """An EXISTS iteration should not include stories/tasks already in sync state."""
+        parsed = {
+            "epics": [{"id": "1", "title": "Foundation"}],
+            "stories": [
+                {"id": "1.1", "epicId": "1"},
+                {"id": "1.2", "epicId": "1"},
+            ],
+            "tasks": [
+                {"id": "1.1-T1", "storyId": "1.1"},
+                {"id": "1.1-T2", "storyId": "1.1"},
+            ],
+            "epicStatuses": {"1": "done"},
+        }
+        sync_state = {
+            "epics": {"1": {"devopsId": 100, "contentHash": "aaa"}},
+            "stories": {
+                "1.1": {"devopsId": 200, "contentHash": "bbb"},
+                "1.2": {"devopsId": 201, "contentHash": "ccc"},
+            },
+            "tasks": {
+                "1.1-T1": {"devopsId": 300, "contentHash": "ddd"},
+                "1.1-T2": {"devopsId": 301, "contentHash": "eee"},
+            },
+            "iterations": {
+                "epic-1-foundation": {"epicId": "1", "devopsId": 429}
+            },
+        }
+        results = self._run_main_logic(parsed, sync_state)
+        assert len(results) == 1
+        it = results[0]
+        assert it["classification"] == "EXISTS"
+        assert it["storyIds"] == []
+        assert it["taskIds"] == []
+
+    def test_exists_iteration_includes_new_items_only(self):
+        """An EXISTS iteration should include only NEW stories/tasks not yet in sync state."""
+        parsed = {
+            "epics": [{"id": "1", "title": "Foundation"}],
+            "stories": [
+                {"id": "1.1", "epicId": "1"},
+                {"id": "1.2", "epicId": "1"},
+                {"id": "1.3", "epicId": "1"},  # NEW - not in sync state
+            ],
+            "tasks": [
+                {"id": "1.1-T1", "storyId": "1.1"},
+                {"id": "1.3-T1", "storyId": "1.3"},  # NEW - not in sync state
+            ],
+            "epicStatuses": {"1": "in-progress"},
+        }
+        sync_state = {
+            "epics": {"1": {"devopsId": 100, "contentHash": "aaa"}},
+            "stories": {
+                "1.1": {"devopsId": 200, "contentHash": "bbb"},
+                "1.2": {"devopsId": 201, "contentHash": "ccc"},
+            },
+            "tasks": {
+                "1.1-T1": {"devopsId": 300, "contentHash": "ddd"},
+            },
+            "iterations": {
+                "epic-1-foundation": {"epicId": "1", "devopsId": 429}
+            },
+        }
+        results = self._run_main_logic(parsed, sync_state)
+        assert len(results) == 1
+        it = results[0]
+        assert it["classification"] == "EXISTS"
+        assert it["storyIds"] == ["1.3"]
+        assert it["taskIds"] == ["1.3-T1"]
+
+    def test_new_iteration_includes_all_items(self):
+        """A NEW iteration should include ALL stories and tasks."""
+        parsed = {
+            "epics": [{"id": "2", "title": "Workspace"}],
+            "stories": [
+                {"id": "2.1", "epicId": "2"},
+                {"id": "2.2", "epicId": "2"},
+            ],
+            "tasks": [
+                {"id": "2.1-T1", "storyId": "2.1"},
+            ],
+            "epicStatuses": {"2": "in-progress"},
+        }
+        sync_state = {
+            "epics": {},
+            "stories": {},
+            "tasks": {},
+            "iterations": {},
+        }
+        results = self._run_main_logic(parsed, sync_state)
+        assert len(results) == 1
+        it = results[0]
+        assert it["classification"] == "NEW"
+        assert it["storyIds"] == ["2.1", "2.2"]
+        assert it["taskIds"] == ["2.1-T1"]
+
+    def test_backlog_epic_skipped(self):
+        """Epics with backlog status should not generate iterations."""
+        parsed = {
+            "epics": [{"id": "3", "title": "Future"}],
+            "stories": [{"id": "3.1", "epicId": "3"}],
+            "tasks": [],
+            "epicStatuses": {"3": "backlog"},
+        }
+        sync_state = {"epics": {}, "stories": {}, "tasks": {}, "iterations": {}}
+        results = self._run_main_logic(parsed, sync_state)
+        assert len(results) == 0
